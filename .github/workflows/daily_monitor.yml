@@ -22,7 +22,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install pandas requests pytz yfinance
+          pip install pandas requests pytz yfinance lxml beautifulsoup4
 
       - name: Run PCR Monitor Script
         env:
