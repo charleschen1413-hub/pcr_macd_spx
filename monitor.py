@@ -3,21 +3,24 @@ import requests
 import pandas as pd
 from datetime import datetime
 import pytz
+import cloudscraper
+from io import StringIO
 
 # --- 策略參數設定 ---
-# 採用 MACD(20, 74, 36)
 FAST, SLOW, SIGNAL = 20, 74, 36
-CSV_FILE = 'pcr_from2011_2.csv'
+CSV_FILE = 'pcr_from2011.csv'
 BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 def get_today_equity_pcr():
-    """從 Cboe 抓取最新的 Equity Put/Call Ratio"""
+    """從 Cboe 抓取最新的 Equity Put/Call Ratio (使用 cloudscraper 繞過防火牆)"""
     url = 'https://www.cboe.com/markets/us/options/market-statistics/daily/'
-    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
-        response = requests.get(url, headers=headers)
-        tables = pd.read_html(response.text)
+        # 建立擬真瀏覽器請求
+        scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
+        response = scraper.get(url)
+        # 解析 HTML 表格
+        tables = pd.read_html(StringIO(response.text))
         df = tables[0]
         pcr_row = df[df[0] == 'EQUITY PUT/CALL RATIO']
         if not pcr_row.empty:
