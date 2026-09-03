@@ -22,7 +22,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install pandas requests beautifulsoup4 lxml pytz
+          pip install pandas requests beautifulsoup4 lxml pytz cloudscraper
 
       - name: Run PCR Monitor Script
         env:
