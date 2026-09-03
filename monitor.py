@@ -5,6 +5,7 @@ from datetime import datetime
 import pytz
 import yfinance as yf
 import traceback
+from io import StringIO
 
 # --- 策略參數設定 ---
 FAST, SLOW, SIGNAL = 20, 74, 36
@@ -13,15 +14,44 @@ BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 def get_today_equity_pcr():
-    """透過 yfinance 官方套件抓取，自動處理 Cookie 與憑證"""
+    """三重繞道機制，確保絕對能抓到 PCR 數據"""
+    
+    # 方法 1: yfinance 搭配自訂 Session (偽裝真實瀏覽器)
     try:
-        ticker = yf.Ticker("^CPCE")
+        session = requests.Session()
+        session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
+        ticker = yf.Ticker("^CPCE", session=session)
         hist = ticker.history(period="5d")
         if not hist.empty:
             last_close = hist['Close'].dropna().iloc[-1]
             return round(float(last_close), 2)
     except Exception as e:
-        print(f"yfinance 抓取失敗: {e}")
+        print(f"方法1(yfinance)失敗: {e}")
+
+    # 方法 2: 透過 AllOrigins 代理直連 Yahoo API (完美繞過 GitHub IP 封鎖)
+    try:
+        url = "https://api.allorigins.win/raw?url=https://query1.finance.yahoo.com/v8/finance/chart/%5ECPCE?range=5d&interval=1d"
+        res = requests.get(url, timeout=15)
+        data = res.json()
+        closes = data['chart']['result'][0]['indicators']['quote'][0]['close']
+        valid_closes = [c for c in closes if c is not None]
+        if valid_closes:
+            return round(float(valid_closes[-1]), 2)
+    except Exception as e:
+        print(f"方法2(Yahoo Proxy)失敗: {e}")
+
+    # 方法 3: 透過 AllOrigins 代理抓取 Cboe 官網 HTML 表格
+    try:
+        url = "https://api.allorigins.win/raw?url=https://www.cboe.com/markets/us/options/market-statistics/daily/"
+        res = requests.get(url, timeout=15)
+        tables = pd.read_html(StringIO(res.text))
+        df = tables[0]
+        pcr_row = df[df[0] == 'EQUITY PUT/CALL RATIO']
+        if not pcr_row.empty:
+            return float(pcr_row.iloc[0, 1])
+    except Exception as e:
+        print(f"方法3(Cboe Proxy)失敗: {e}")
+        
     return None
 
 def send_telegram(text):
@@ -38,13 +68,13 @@ def main():
     try:
         today_pcr = get_today_equity_pcr()
         if today_pcr is None:
-            send_telegram("⚠️ <b>PCR 監控系統異常</b>\n無法從 yfinance 獲取今日數據。")
+            send_telegram("⚠️ <b>PCR 監控系統異常</b>\n三種抓取通道(yfinance, Yahoo代理, Cboe代理)全數被擋，無法獲取今日數據。")
             return
 
         tz = pytz.timezone('US/Eastern')
         today_str = datetime.now(tz).strftime('%Y-%m-%d')
 
-        # 讀取 CSV 並強制將所有欄位轉為小寫、去除空白 (避免 Date/date 大小寫引發 KeyError)
+        # 讀取 CSV 並強制將所有欄位轉為小寫、去除空白 (防呆)
         df = pd.read_csv(CSV_FILE)
         df.columns = df.columns.str.lower().str.strip()
 
@@ -90,8 +120,8 @@ def main():
         send_telegram(msg)
         
     except Exception as e:
-        # 如果 Python 執行期間發生任何錯誤，直接將錯誤報告推送到 Telegram
-        error_msg = f"⚠️ <b>Python 執行發生嚴重錯誤</b>\n<pre>{str(e)}</pre>"
+        # 如果 Python 執行期間發生任何錯誤，會直接把詳細錯誤代碼推送到你的 Telegram
+        error_msg = f"⚠️ <b>Python 執行發生嚴重錯誤</b>\n<pre>{str(e)}</pre>\n{traceback.format_exc()[-500:]}"
         send_telegram(error_msg)
         raise e
 
