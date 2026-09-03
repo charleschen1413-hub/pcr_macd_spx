@@ -1,9 +1,8 @@
 import os
-import requests
 import pandas as pd
 from datetime import datetime
 import pytz
-import cloudscraper
+from curl_cffi import requests
 from io import StringIO
 
 # --- 策略參數設定 ---
@@ -13,13 +12,11 @@ BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 def get_today_equity_pcr():
-    """從 Cboe 抓取最新的 Equity Put/Call Ratio (使用 cloudscraper 繞過防火牆)"""
+    """從 Cboe 抓取最新的 Equity Put/Call Ratio (模擬真實 Chrome 繞過防火牆)"""
     url = 'https://www.cboe.com/markets/us/options/market-statistics/daily/'
     try:
-        # 建立擬真瀏覽器請求
-        scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
-        response = scraper.get(url)
-        # 解析 HTML 表格
+        # impersonate="chrome110" 能發送與真實瀏覽器完全相同的底層網路封包
+        response = requests.get(url, impersonate="chrome110")
         tables = pd.read_html(StringIO(response.text))
         df = tables[0]
         pcr_row = df[df[0] == 'EQUITY PUT/CALL RATIO']
@@ -37,7 +34,7 @@ def send_telegram(text):
         return
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'}
-    requests.post(url, data=payload)
+    requests.post(url, data=payload, impersonate="chrome110")
 
 def main():
     today_pcr = get_today_equity_pcr()
@@ -45,11 +42,9 @@ def main():
         send_telegram("⚠️ <b>PCR 監控系統異常</b>\n無法從 Cboe 獲取今日數據。")
         return
 
-    # 取得美東時間
     tz = pytz.timezone('US/Eastern')
     today_str = datetime.now(tz).strftime('%Y-%m-%d')
 
-    # 讀取並更新 CSV 歷史資料
     df = pd.read_csv(CSV_FILE)
     if df['date'].iloc[-1] == today_str:
         df.loc[df.index[-1], 'pcr'] = today_pcr
@@ -57,10 +52,8 @@ def main():
         new_row = pd.DataFrame({'date': [today_str], 'pcr': [today_pcr]})
         df = pd.concat([df, new_row], ignore_index=True)
     
-    # 存回 CSV 以便 GitHub Actions 更新檔案
     df.to_csv(CSV_FILE, index=False)
 
-    # 計算 MACD 數值
     df['EMA_Fast'] = df['pcr'].ewm(span=FAST, adjust=False).mean()
     df['EMA_Slow'] = df['pcr'].ewm(span=SLOW, adjust=False).mean()
     df['MACD'] = df['EMA_Fast'] - df['EMA_Slow']
@@ -70,7 +63,6 @@ def main():
     hist_today = df['Histogram'].iloc[-1]
     hist_yest = df['Histogram'].iloc[-2]
     
-    # 根據 json 檔的邏輯設定動作
     signal_msg = "無 0 軸穿越 (維持現有不持倉狀態)"
     
     if hist_yest < 0 and hist_today > 0:
